@@ -32,6 +32,8 @@ jobs:
   build:
     name: Build debug APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to publish the APK to Releases
     steps:
       - uses: actions/checkout@v4
 
@@ -95,9 +97,30 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mirage-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # Publish the APK to the repo's Releases page as a rolling "android-debug"
+      # pre-release. Runs only on branch pushes (not PRs), and only if the build
+      # above succeeded. Each successful build updates the same release asset.
+      - name: Publish APK to Releases
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-debug
+          name: Mirage Android (debug)
+          prerelease: true
+          body: |
+            Automated **debug** build of the Mirage Android client, built from the
+            `android-app` branch by CI.
+
+            - Commit: ${{ github.sha }}
+            - This APK is a debug build (unsigned for release) — for testing only.
+
+            Download `app-debug.apk` below and install with `adb install app-debug.apk`.
+          files: android/app/build/outputs/apk/debug/*.apk
+          fail_on_unmatched_files: true
