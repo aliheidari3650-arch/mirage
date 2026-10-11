@@ -55,11 +55,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages: '' avoids the action's default attempt to install the obsolete
+      # "tools" package, which no longer exists and fails the step.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - name: Install Android NDK ${{ env.NDK_VERSION }}
-        run: sdkmanager --install "ndk;${NDK_VERSION}"
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "ndk;${NDK_VERSION}"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
