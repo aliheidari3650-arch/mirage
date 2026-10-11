@@ -1,5 +1,8 @@
 package com.mirage.vpn.ui
 
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -15,105 +18,132 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mirage.vpn.MirageVpnService
+import com.mirage.vpn.R
+import com.mirage.vpn.Throughput
 import com.mirage.vpn.data.Profile
 import java.util.Locale
+
+/** Number of one-second samples in the sparkline. */
+private const val SAMPLES = 40
 
 @Composable
 fun HomeScreen(
     status: Int,
     message: String?,
     metrics: LongArray,
+    throughput: Throughput,
     samples: List<Float>,
     protocol: String,
-    profile: Profile?,
+    profile: Profile,
     onPower: () -> Unit,
     onServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val m = if (metrics.size >= 5) metrics else LongArray(5)
     Column(
         modifier = modifier
+            .testTag(Tags.HOME_SCREEN)
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Hero(status, message, protocol, profile, onPower)
+        Hero(status, message, uptimeSeconds = m[4], protocol = protocol, profile = profile, onPower = onPower)
         if (status == MirageVpnService.STATUS_CONNECTED) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                val m = if (metrics.size >= 5) metrics else LongArray(5)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MetricTile("Uptime", formatUptime(m[4]), Modifier.weight(1f))
-                    MetricTile("Down", formatBytes(m[1]), Modifier.weight(1f))
-                    MetricTile("Up", formatBytes(m[0]), Modifier.weight(1f))
+                    RateTile(
+                        label = "Download",
+                        rate = throughput.downBps,
+                        total = m[1],
+                        icon = R.drawable.ic_arrow_down,
+                        iconTint = MaterialTheme.extraColors.ok,
+                        modifier = Modifier.weight(1f),
+                    )
+                    RateTile(
+                        label = "Upload",
+                        rate = throughput.upBps,
+                        total = m[0],
+                        icon = R.drawable.ic_arrow_up,
+                        iconTint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
                 Sparkline(samples)
             }
         }
-        ServerRow(profile, onServer)
+        ServerCard(profile, onServer)
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Hero: status chip, power button inside two soft rings, state text / timer, message
+// ---------------------------------------------------------------------------------------------
+
 @Composable
-private fun Hero(status: Int, message: String?, protocol: String, profile: Profile?, onPower: () -> Unit) {
+private fun Hero(
+    status: Int,
+    message: String?,
+    uptimeSeconds: Long,
+    protocol: String,
+    profile: Profile,
+    onPower: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
-    val (bg, fg) = when (status) {
-        MirageVpnService.STATUS_CONNECTED -> scheme.primary to scheme.onPrimary
-        MirageVpnService.STATUS_ERROR -> scheme.errorContainer to scheme.onErrorContainer
-        else -> scheme.surfaceContainerHigh to scheme.onSurfaceVariant
-    }
-    val busy = status == MirageVpnService.STATUS_CONNECTING
+    val connected = status == MirageVpnService.STATUS_CONNECTED
     val title = when (status) {
         MirageVpnService.STATUS_CONNECTING -> "Connecting…"
-        MirageVpnService.STATUS_CONNECTED -> "Connected"
+        MirageVpnService.STATUS_CONNECTED -> formatUptime(uptimeSeconds)
         MirageVpnService.STATUS_ERROR -> "Couldn't connect"
         else -> "Not connected"
     }
-    val host = profile?.host.orEmpty()
+    val host = profile.host
     val detail = when (status) {
         MirageVpnService.STATUS_CONNECTING -> message?.takeIf { it.isNotBlank() } ?: "Reaching $host"
-        MirageVpnService.STATUS_CONNECTED ->
-            "Protected" + (if (protocol.isNotBlank()) " · ${protocol.uppercase(Locale.ROOT)}" else "") + " to $host"
+        MirageVpnService.STATUS_CONNECTED -> {
+            val proto = protocolDisplay(protocol, profile)
+            "Protected" + (if (proto != null) " · $proto" else "") + " to $host"
+        }
         MirageVpnService.STATUS_ERROR -> message?.takeIf { it.isNotBlank() } ?: "Check the address and your login."
-        else -> if (profile == null) "Add a server to get started" else "Tap to connect"
+        else -> "Tap to connect"
     }
-    val action = if (status == MirageVpnService.STATUS_CONNECTING || status == MirageVpnService.STATUS_CONNECTED) "Disconnect" else "Connect"
+    val action = if (status == MirageVpnService.STATUS_CONNECTING || connected) "Disconnect" else "Connect"
 
     Column(
         Modifier
@@ -122,69 +152,240 @@ private fun Hero(status: Int, message: String?, protocol: String, profile: Profi
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) {
-            if (busy) {
-                val spin = rememberInfiniteTransition(label = "spin")
-                val angle by spin.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 360f,
-                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Restart),
-                    label = "angle",
-                )
-                val ring = scheme.primary
-                Canvas(Modifier.size(148.dp)) {
-                    val w = 2.dp.toPx()
-                    drawArc(
-                        color = ring,
-                        startAngle = angle,
-                        sweepAngle = 90f,
-                        useCenter = false,
-                        topLeft = Offset(w / 2, w / 2),
-                        size = Size(size.width - w, size.height - w),
-                        style = Stroke(width = w, cap = StrokeCap.Round),
-                    )
-                }
-            }
-            Box(
-                Modifier
-                    .size(132.dp)
-                    .clip(CircleShape)
-                    .background(bg)
-                    .clickable(onClickLabel = action, role = Role.Button, onClick = onPower)
-                    .semantics { contentDescription = action },
-                contentAlignment = Alignment.Center,
-            ) {
-                PowerGlyph(fg)
-            }
+        StatusChip(status)
+        PowerRing(status, action, onPower)
+        if (connected) {
+            Text(
+                title,
+                fontSize = 34.sp,
+                lineHeight = 40.sp,
+                letterSpacing = 0.7.sp,
+                style = TextStyle(fontFeatureSettings = "tnum"),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag(Tags.STATE_TEXT),
+            )
+        } else {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag(Tags.STATE_TEXT),
+            )
         }
-        Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Text(
             detail,
-            style = MaterialTheme.typography.bodyMedium,
+            fontSize = 13.5.sp,
+            lineHeight = 19.sp,
             color = if (status == MirageVpnService.STATUS_ERROR) scheme.error else scheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp),
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .heightIn(min = 18.dp)
+                .testTag(Tags.STATE_MESSAGE),
         )
     }
 }
 
+/** "QUIC" / "TCP" for the protocol in use, or null when it isn't known yet. */
+private fun protocolDisplay(active: String, profile: Profile): String? =
+    when (active.trim().uppercase(Locale.ROOT)) {
+        "UDP", "QUIC" -> "QUIC"
+        "TCP" -> "TCP"
+        // Not reported yet: only name it when the config allows exactly one protocol.
+        else -> profile.protocolLabel.takeIf { it == "QUIC" || it == "TCP" }
+    }
+
 @Composable
-private fun MetricTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            value,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+private fun StatusChip(status: Int) {
+    val scheme = MaterialTheme.colorScheme
+    val extra = MaterialTheme.extraColors
+    val (bg, fg) = when (status) {
+        MirageVpnService.STATUS_CONNECTED -> extra.okSoft to extra.onOkSoft
+        MirageVpnService.STATUS_CONNECTING -> scheme.primaryContainer to scheme.onPrimaryContainer
+        MirageVpnService.STATUS_ERROR -> scheme.errorContainer to scheme.onErrorContainer
+        else -> scheme.surfaceContainerHigh to scheme.onSurfaceVariant
+    }
+    val container by animateColorAsState(bg, tween(300), label = "chipBg")
+    val content by animateColorAsState(fg, tween(300), label = "chipFg")
+    val text = when (status) {
+        MirageVpnService.STATUS_CONNECTING -> "Connecting"
+        MirageVpnService.STATUS_CONNECTED -> "Protected"
+        else -> "Not protected"
+    }
+    val dotAlpha = if (status == MirageVpnService.STATUS_CONNECTING) {
+        val blink = rememberInfiniteTransition(label = "blink")
+        val a by blink.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.25f,
+            animationSpec = infiniteRepeatable(tween(500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "blinkAlpha",
         )
+        a
+    } else {
+        1f
+    }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(container)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag(Tags.STATUS_CHIP),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .alpha(dotAlpha)
+                .clip(CircleShape)
+                .background(content),
+        )
+        Text(text, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = content)
+    }
+}
+
+@Composable
+private fun PowerRing(status: Int, action: String, onPower: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val extra = MaterialTheme.extraColors
+    val connected = status == MirageVpnService.STATUS_CONNECTED
+    val busy = status == MirageVpnService.STATUS_CONNECTING
+
+    val outer by animateColorAsState(
+        if (connected) extra.ok.copy(alpha = 0.09f) else scheme.surfaceContainerHigh.copy(alpha = 0.55f),
+        tween(450),
+        label = "ringOuter",
+    )
+    val inner by animateColorAsState(
+        if (connected) extra.ok.copy(alpha = 0.17f) else scheme.surfaceContainerHigh,
+        tween(450),
+        label = "ringInner",
+    )
+    val buttonBg by animateColorAsState(
+        when (status) {
+            MirageVpnService.STATUS_CONNECTED -> extra.ok
+            MirageVpnService.STATUS_ERROR -> scheme.errorContainer
+            else -> scheme.surfaceContainerHigh
+        },
+        tween(300),
+        label = "powerBg",
+    )
+    val buttonFg by animateColorAsState(
+        when (status) {
+            MirageVpnService.STATUS_CONNECTED -> scheme.surface
+            MirageVpnService.STATUS_ERROR -> scheme.onErrorContainer
+            else -> scheme.onSurfaceVariant
+        },
+        tween(300),
+        label = "powerFg",
+    )
+
+    Box(
+        Modifier
+            .size(204.dp)
+            .clip(CircleShape)
+            .background(outer),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(168.dp)
+                .clip(CircleShape)
+                .background(inner),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) {
+                if (busy) Spinner(scheme.primary)
+                Box(
+                    Modifier
+                        .size(132.dp)
+                        .clip(CircleShape)
+                        .background(buttonBg)
+                        .clickable(onClickLabel = action, role = Role.Button, onClick = onPower)
+                        .semantics { contentDescription = action }
+                        .testTag(Tags.POWER_BUTTON),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Glyph(R.drawable.ic_power, buttonFg, 46.dp)
+                }
+            }
+        }
+    }
+}
+
+/** A quarter-circle arc turning around the power button while connecting. */
+@Composable
+private fun Spinner(color: Color) {
+    val spin = rememberInfiniteTransition(label = "spin")
+    val angle by spin.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Restart),
+        label = "angle",
+    )
+    Canvas(Modifier.size(148.dp)) {
+        val w = 2.dp.toPx()
+        drawArc(
+            color = color,
+            startAngle = angle - 135f,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(w / 2, w / 2),
+            size = Size(size.width - w, size.height - w),
+            style = Stroke(width = w, cap = StrokeCap.Round),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Live numbers
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+private fun RateTile(
+    label: String,
+    rate: Long,
+    total: Long,
+    @DrawableRes icon: Int,
+    iconTint: Color,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val tabular = TextStyle(fontFeatureSettings = "tnum")
+    Row(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(scheme.surfaceContainerHigh)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(scheme.surface),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(icon, iconTint, 16.dp) }
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
+            Text(
+                "${formatBytes(rate)}/s",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                style = tabular,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
+            Text(
+                "${formatBytes(total)} total",
+                fontSize = 11.5.sp,
+                color = scheme.onSurfaceVariant,
+                style = tabular,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
+        }
     }
 }
 
@@ -222,69 +423,57 @@ private fun Sparkline(samples: List<Float>) {
     }
 }
 
-private const val SAMPLES = 40
+// ---------------------------------------------------------------------------------------------
+// Server card
+// ---------------------------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ServerRow(profile: Profile?, onClick: () -> Unit) {
+private fun ServerCard(profile: Profile, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        color = scheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(scheme.surfaceContainerHigh)
+            .clickable(onClickLabel = "Edit server", role = Role.Button, onClick = onClick)
+            .padding(14.dp)
+            .testTag(Tags.SERVER_CARD),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(scheme.primaryContainer),
+            contentAlignment = Alignment.Center,
         ) {
-            if (profile != null) {
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) { GlobeGlyph(scheme.onPrimaryContainer) }
-            } else {
-                val dash = scheme.outline
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .drawBehind {
-                            drawRoundRect(
-                                color = dash,
-                                cornerRadius = CornerRadius(12.dp.toPx()),
-                                style = Stroke(
-                                    width = 1.5.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
-                                ),
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Default.Add, contentDescription = null, tint = scheme.onSurfaceVariant) }
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    profile?.host ?: "Add a server",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    profile?.summary ?: "Address and login from your provider",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                )
-            }
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = scheme.onSurfaceVariant,
+            Text(
+                profile.avatarLetter,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = scheme.onPrimaryContainer,
             )
         }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                profile.displayName,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                profile.summary,
+                fontSize = 12.5.sp,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = scheme.onSurfaceVariant,
+        )
     }
 }
 

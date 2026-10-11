@@ -446,7 +446,7 @@ class MirageVpnService : VpnService(), MirageCallback {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_stat_turbo)
             .setContentIntent(openApp)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

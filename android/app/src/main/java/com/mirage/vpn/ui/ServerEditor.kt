@@ -3,6 +3,7 @@ package com.mirage.vpn.ui
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -109,6 +112,7 @@ fun ServerEditorSheet(
     onSave: (Profile) -> Unit,
     onScan: () -> Unit,
     onPaste: () -> Unit,
+    onRemove: (() -> Unit)? = null,
 ) {
     // `base` is the config JSON being edited; the form writes into copies of it, so unknown keys
     // from the stored profile always survive.
@@ -169,6 +173,7 @@ fun ServerEditorSheet(
             Column(
                 Modifier
                     .weight(1f, fill = false)
+                    .testTag(Tags.EDITOR_BODY)
                     .verticalScroll(scroll)
                     .padding(horizontal = 20.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -183,6 +188,17 @@ fun ServerEditorSheet(
                     onAdvancedToggle = { advancedOpen = !advancedOpen },
                     openSections = openSections,
                 )
+                // Only when a server is saved: forget it (and its password) and go back to the welcome screen.
+                if (initial != null && onRemove != null) {
+                    TextButton(
+                        onClick = onRemove,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(bottom = 8.dp)
+                            .testTag(Tags.REMOVE_SERVER),
+                    ) { Text("Remove this server") }
+                }
             }
 
             // Footer
@@ -202,8 +218,14 @@ fun ServerEditorSheet(
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                Button(onClick = ::trySave, modifier = Modifier.weight(1f)) { Text("Save") }
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f).testTag(Tags.EDITOR_CANCEL),
+                ) { Text("Cancel") }
+                Button(
+                    onClick = ::trySave,
+                    modifier = Modifier.weight(1f).testTag(Tags.EDITOR_SAVE),
+                ) { Text("Save") }
             }
         }
     }
@@ -440,7 +462,8 @@ private fun ConfigFileSection(form: ServerForm, base: JSONObject, name: String) 
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                     .heightIn(max = 260.dp)
                     .verticalScroll(rememberScrollState())
                     .horizontalScroll(rememberScrollState())
@@ -552,12 +575,7 @@ private fun Field(
     val supporting: (@Composable () -> Unit)? = (error ?: hint)?.let { text -> { Text(text) } }
     val placeholderSlot: (@Composable () -> Unit)? = placeholder?.let { text -> { Text(text) } }
     val trailing: (@Composable () -> Unit)? = if (secret) {
-        {
-            TextButton(
-                onClick = { reveal = !reveal },
-                modifier = Modifier.semantics { contentDescription = if (reveal) "Hide $label" else "Show $label" },
-            ) { Text(if (reveal) "Hide" else "Show") }
-        }
+        { RevealToggle(label, reveal) { reveal = !reveal } }
     } else null
 
     OutlinedTextField(

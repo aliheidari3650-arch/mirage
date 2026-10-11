@@ -5,7 +5,7 @@ Android VPN client for [Mirage](../README.md). This is the Android counterpart t
 ## Overview
 
 - Lives in `android/`. It drives the same Rust core as the iOS app, through the `mirage-ffi` crate. The crate is compiled to a native `.so` and called over JNI.
-- Single-screen Jetpack Compose UI. Paste a TOML config, tap **Connect** or **Disconnect**, and watch live status and metrics: uptime, bytes sent and received, and the active protocol.
+- Jetpack Compose UI (Material 3, fixed brand colours, light and dark). A welcome screen offers **Scan QR code**, **Paste access link** and **Sign in with username**. Once a server is saved, the home screen has one power button, a connection timer, live download and upload rates, and a server card. The settings button opens the full server editor, which also has **Remove this server**.
 
 ## Architecture
 
@@ -88,6 +88,46 @@ gradle wrapper --gradle-version 8.9
 
 Alternatively, open the `android/` folder in Android Studio, which regenerates the wrapper.
 
+## Versioning and release signing
+
+The version comes from Gradle properties, with defaults for local builds:
+
+```bash
+./gradlew assembleRelease -PversionName=1.0.0 -PversionCode=10000
+```
+
+`versionName` defaults to `1.0.0` and `versionCode` to `1`.
+
+A release build is signed only when all three environment variables are set. Otherwise the release APK is unsigned.
+
+| Variable | Meaning |
+| --- | --- |
+| `ANDROID_KEYSTORE_FILE` | Absolute path to a PKCS12 keystore (`.p12`) |
+| `ANDROID_KEYSTORE_PASSWORD` | Password for the store and the key (the same value) |
+| `ANDROID_KEY_ALIAS` | Key alias |
+
+The signed APK is written to `android/app/build/outputs/apk/release/app-release.apk`.
+
+## Tests
+
+Instrumentation tests live in `app/src/androidTest/java/com/mirage/vpn/` and run on a device or emulator that has the native libraries in `jniLibs/`:
+
+```bash
+./gradlew connectedDebugAndroidTest
+```
+
+- `NativeCoreTest`: loads `libmirage_ffi`, parses and round-trips configs, creates and destroys a handle, and checks the access-link codec.
+- `AppSmokeTest`: drives the UI from the welcome screen through sign-in to the home screen, then removes the server.
+- `EndToEndVpnTest`: connects to a real server and pings through the tunnel. It is skipped unless an access link is passed:
+
+  ```bash
+  ./gradlew connectedDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.e2eLink='mirage://import?v=1&...' \
+    -Pandroid.testInstrumentationRunnerArguments.e2ePingTarget=10.11.12.1
+  ```
+
+  `e2ePingTarget` defaults to `10.11.12.1`.
+
 ## Usage
 
 1. Install the APK:
@@ -96,14 +136,16 @@ Alternatively, open the `android/` folder in Android Studio, which regenerates t
    adb install android/app/build/outputs/apk/debug/app-debug.apk
    ```
 
-2. Open the app and paste your Mirage client config. It uses the same TOML format as `examples/client.toml`. The app ships a commented sample as its default.
-3. Tap **Connect**. Android shows a VPN consent dialog the first time. Accept it.
+2. Open the app and add your server in one of three ways:
+   - **Scan QR code** or **Paste access link**: use the `mirage://` link from your server. It carries every setting.
+   - **Sign in with username**: enter the server address, port, username and password. If your server uses disguise keys, use its QR code or link instead.
+3. Tap the power button. Android shows a VPN consent dialog the first time. Accept it.
 
 While connected, the app runs as a foreground service and shows an ongoing notification.
 
 ## Configuration
 
-The config is the standard Mirage client TOML. See [`examples/client.toml`](../examples/client.toml) for the full set of options, including:
+Behind the scenes the app stores the standard Mirage client TOML. See [`examples/client.toml`](../examples/client.toml) for the full set of options, including:
 
 - server host and port
 - authentication
@@ -114,7 +156,5 @@ The config is the standard Mirage client TOML. See [`examples/client.toml`](../e
 
 ## Limitations
 
-- The debug APK is unsigned for release. It is meant for testing only.
 - There is no Play Store packaging.
 - Per-app split tunneling is limited to excluding this app. Arbitrary excluded routes are also limited: `excludeRoute` requires API 33 or later, so on Android 12 and older they are not available.
-- The build has not yet run on CI. Treat the first CI run as the verification step.

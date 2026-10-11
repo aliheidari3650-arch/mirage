@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * The single active server profile.
@@ -22,17 +23,34 @@ data class Profile(val name: String, val configJson: JSONObject, val toml: Strin
     val password: String get() = configJson.optJSONObject("authentication")?.optString("password", "").orEmpty()
     val needsCredentials: Boolean get() = username.isBlank() || password.isEmpty()
 
-    val protocolLabel: String
+    /** Transport protocol order from the config ("udp" = QUIC, "tcp" = TCP). */
+    val protocols: List<String>
         get() {
             val arr = configJson.optJSONObject("transport")?.optJSONArray("protocols")
-            val list = if (arr == null) listOf("udp", "tcp") else List(arr.length()) { arr.optString(it) }
-            return when {
-                list.size > 1 -> "Auto"
-                list.firstOrNull() == "udp" -> "QUIC"
-                list.firstOrNull() == "tcp" -> "TCP"
-                else -> "Auto"
-            }
+            return if (arr == null) listOf("udp", "tcp") else List(arr.length()) { arr.optString(it) }
         }
+
+    val protocolLabel: String
+        get() = when (protocols) {
+            listOf("udp", "tcp") -> "Auto"
+            listOf("udp") -> "QUIC"
+            listOf("tcp") -> "TCP"
+            else -> "Custom order"
+        }
+
+    /** Name shown to the user: the saved name, or the host when there is none. */
+    val displayName: String get() = name.ifBlank { host }
+
+    /** First letter of [displayName], for the round avatar. */
+    val avatarLetter: String
+        get() {
+            val s = displayName.trim()
+            return if (s.isEmpty()) "?" else String(Character.toChars(s.codePointAt(0))).uppercase(Locale.ROOT)
+        }
+
+    /** Website the connection is disguised as, or "" when disguise is off. */
+    val targetSni: String
+        get() = configJson.optJSONObject("camouflage")?.optString("target_sni", "").orEmpty()
 
     val allTraffic: Boolean
         get() {
@@ -76,8 +94,13 @@ class ProfileStore(context: Context) {
             .apply()
     }
 
+    /** Forgets the saved profile (including its password). */
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit()
+            .remove(KEY_NAME)
+            .remove(KEY_JSON)
+            .remove(KEY_TOML)
+            .apply()
     }
 
     private companion object {

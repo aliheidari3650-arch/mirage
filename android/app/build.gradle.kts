@@ -30,6 +30,18 @@ val defaultConfigB64: String = run {
     }
 }
 
+// Release version, overridable from CI: -PversionName=1.0.0 -PversionCode=10000
+val appVersionName: String = (findProperty("versionName") as String?) ?: "1.0.0"
+val appVersionCode: Int = (findProperty("versionCode") as String?)?.toInt() ?: 1
+
+// Release signing comes from the environment (CI). All three must be set, otherwise the release
+// build stays unsigned. ANDROID_KEYSTORE_PASSWORD is used for both the store and the key.
+val releaseKeystoreFile: String = System.getenv("ANDROID_KEYSTORE_FILE").orEmpty()
+val releaseKeystorePassword: String = System.getenv("ANDROID_KEYSTORE_PASSWORD").orEmpty()
+val releaseKeyAlias: String = System.getenv("ANDROID_KEY_ALIAS").orEmpty()
+val hasReleaseSigning: Boolean =
+    releaseKeystoreFile.isNotEmpty() && releaseKeystorePassword.isNotEmpty() && releaseKeyAlias.isNotEmpty()
+
 android {
     namespace = "com.mirage.vpn"
     compileSdk = 34
@@ -38,14 +50,28 @@ android {
         applicationId = "com.mirage.vpn"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
 
         buildConfigField("String", "DEFAULT_CONFIG_B64", "\"$defaultConfigB64\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(releaseKeystoreFile)
+                storeType = "pkcs12"
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeystorePassword
+            }
+        }
     }
 
     buildTypes {
@@ -55,6 +81,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -107,4 +136,12 @@ dependencies {
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Instrumentation tests (connectedDebugAndroidTest)
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
