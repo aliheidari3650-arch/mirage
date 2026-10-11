@@ -45,4 +45,11 @@ object MirageNative {
     // Returns [bytesSent, bytesReceived, packetsSent, packetsReceived, uptimeSeconds]
     external fun nativeGetMetrics(handle: Long): LongArray
     external fun nativeGetActiveProtocol(handle: Long): String
+
+    // Config helpers. Both return a JSON envelope: {"ok": <value>} or {"error": "<message>"}.
+    // nativeParseConfig: TOML -> fully resolved ClientConfig as a JSON object.
+    external fun nativeParseConfig(toml: String): String
+
+    // nativeConfigToToml: ClientConfig JSON object -> TOML string.
+    external fun nativeConfigToToml(json: String): String
 }

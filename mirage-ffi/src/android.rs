@@ -384,3 +384,60 @@ pub extern "system" fn Java_com_mirage_vpn_MirageNative_nativeGetActiveProtocol(
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+// ─── Config parse / serialize helpers ──────────────────────────────────────────
+
+/// Reads a Java string argument, runs `f` on it (never unwinding across FFI) and
+/// returns a `{"ok": ...}` / `{"error": "..."}` JSON envelope as a Java string.
+fn envelope_call(
+    env: &mut JNIEnv,
+    input: &JString,
+    f: impl FnOnce(&str) -> Result<serde_json::Value, String>,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s: String = match env.get_string(input) {
+            Ok(s) => s.into(),
+            Err(_) => return Err("input string is invalid".to_string()),
+        };
+        f(&s)
+    }));
+    let envelope = match result {
+        Ok(Ok(v)) => serde_json::json!({ "ok": v }),
+        Ok(Err(e)) => serde_json::json!({ "error": e }),
+        Err(_) => serde_json::json!({ "error": "internal error (panic)" }),
+    };
+    match env.new_string(envelope.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => {
+            clear_exception(env);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_mirage_vpn_MirageNative_nativeParseConfig(
+    mut env: JNIEnv,
+    _class: JClass,
+    toml: JString,
+) -> jstring {
+    envelope_call(&mut env, &toml, |s| {
+        let config = crate::parse_config_from_toml(s)?;
+        serde_json::to_value(&config).map_err(|e| format!("Failed to serialize config: {e}"))
+    })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_mirage_vpn_MirageNative_nativeConfigToToml(
+    mut env: JNIEnv,
+    _class: JClass,
+    json: JString,
+) -> jstring {
+    envelope_call(&mut env, &json, |s| {
+        let config: mirage::config::ClientConfig =
+            serde_json::from_str(s).map_err(|e| format!("Invalid config JSON: {e}"))?;
+        let toml = toml::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize config to TOML: {e}"))?;
+        Ok(serde_json::Value::String(toml))
+    })
+}

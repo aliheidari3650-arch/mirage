@@ -29,6 +29,29 @@ env:
   NDK_VERSION: "26.3.11579264"
 
 jobs:
+  # Host-side checks for the Rust pieces the app depends on: the config
+  # serialize/parse round-trip and the server's access-link generator.
+  host-checks:
+    name: Rust checks (config + server CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BoringSSL build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake golang nasm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: host-checks
+
+      - name: Build server CLI
+        run: cargo build -p mirage --bins
+
+      - name: Test config round-trip and access links
+        run: cargo test -p mirage --lib -- config share_link
+
   build:
     name: Build debug APK
     runs-on: ubuntu-latest

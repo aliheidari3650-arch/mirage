@@ -23,6 +23,7 @@ bytes = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
+toml = "0.8"
 
 [build-dependencies]
 cbindgen = "0.27"

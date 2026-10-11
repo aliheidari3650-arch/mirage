@@ -278,7 +278,7 @@ class MirageVpnService : VpnService(), MirageCallback {
         excludedRoutesJson: String,
     ) {
         val builder = Builder()
-        builder.setSession("Mirage")
+        builder.setSession("Turbo VPN")
         builder.setBlocking(true)
         if (mtu > 0) builder.setMtu(mtu)
 
